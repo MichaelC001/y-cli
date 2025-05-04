@@ -7,34 +7,93 @@ from prompt_toolkit.document import Document
 from rich.console import Console
 from chat.models import Message
 
-# Define slash commands
-SLASH_COMMANDS = ["/copy", "/translate", "/save"]
+# --- Command Definitions ---
+COMMAND_DISPLAY_TEXT = {
+    "/copy": "copy(c)",
+    "/translate": "translate(t)",
+    "/save": "save(s)",
+    "/quit": "quit(q)"
+}
+# Map shortcuts and full commands to canonical command name (or 'exit')
+COMMAND_MAP = {
+    "/c": "/copy",
+    "/copy": "/copy",
+    "/t": "/translate",
+    "/translate": "/translate",
+    "/s": "/save",
+    "/save": "/save",
+    "/q": "exit",
+    "/quit": "exit",
+    "exit": "exit", # Allow typing 'exit' directly
+    "quit": "exit"  # Allow typing 'quit' directly
+}
+# List of commands/shortcuts that trigger the completer
+COMMAND_TRIGGERS = list(COMMAND_MAP.keys())
+# --- End Command Definitions ---
 
 class SlashCommandCompleter(Completer):
-    """Completer for slash commands with manual filtering."""
-    def __init__(self, commands: List[str]):
-        # Store the raw commands list
-        self.commands = commands
-        # self.command_completer = WordCompleter(commands, ignore_case=True) # We might not need this if filtering manually
+    """Completer for slash commands with manual filtering and display text."""
+    def __init__(self, command_map: dict, display_text: dict):
+        # Store the mappings
+        self.command_map = command_map
+        self.display_text = display_text
+        # Get potential inputs (shortcuts and full commands starting with /)
+        self.potential_inputs = [k for k in command_map.keys() if k.startswith('/')]
 
     def get_completions(self, document: Document, complete_event) -> Iterable[Completion]:
-        text = document.text_before_cursor.lower() # Use lower for case-insensitive matching
+        text = document.text_before_cursor.lower()
+        # print(f\"DEBUG: Completer called. Text: '{text}'\") # DEBUG
 
         if text.startswith('/'):
-            # Manual filtering
-            for command in self.commands:
-                if command.lower().startswith(text):
-                    yield Completion(
-                        command,          # The completion text
-                        start_position=-len(text) # Position relative to cursor where replacement starts
-                    )
-            # No need to call self.command_completer anymore
-            # yield from self.command_completer.get_completions(document, complete_event)
+            # print(\"DEBUG: Text starts with /") # DEBUG
+            matches_by_canonical = {}
+
+            # 1. Find all matches and group by canonical command
+            for potential_input in self.potential_inputs:
+                if potential_input.startswith(text):
+                    # print(f\"DEBUG: '{potential_input}' starts with '{text}'\") # DEBUG
+                    canonical_command = self.command_map[potential_input]
+                    if canonical_command not in matches_by_canonical:
+                        matches_by_canonical[canonical_command] = []
+                    matches_by_canonical[canonical_command].append(potential_input)
+
+            # print(f\"DEBUG: Matches found: {matches_by_canonical}\") # DEBUG
+            # 2. For each canonical command, yield the best (shortest) match
+            # yielded_count = 0 # DEBUG
+            for canonical_command, matching_inputs in matches_by_canonical.items():
+                # Sort matches by length (shortest first)
+                matching_inputs.sort(key=len)
+                best_match = matching_inputs[0] # The shortest one is preferred
+                # print(f\"DEBUG: Canonical: {canonical_command}, Best match: {best_match}\") # DEBUG
+
+                # Determine display text and start position
+                if best_match == text:
+                    display = best_match
+                    # start_pos = 0 # Revert this
+                else:
+                     if canonical_command == 'exit':
+                         display = self.display_text.get('/quit', best_match)
+                     else:
+                         display = self.display_text.get(canonical_command, best_match)
+                     # start_pos = -len(text) # This is the default
+
+                # Always use -len(text) for start_position
+                start_pos = -len(text)
+
+                yield Completion(
+                    best_match,  # Complete with the best match (e.g., /c)
+                    start_position=start_pos,
+                    display=display # Display shortcut or formatted text
+                )
+                # yielded_count += 1 # DEBUG
+            # print(f\"DEBUG: Yielded {yielded_count} completions.") # DEBUG
+        # else:
+             # print(\"DEBUG: Text does not start with /. No completions.\") # DEBUG
 
 class InputManager:
     def __init__(self, console: Console):
         self.console = console
-        self.slash_completer = SlashCommandCompleter(SLASH_COMMANDS)
+        self.slash_completer = SlashCommandCompleter(COMMAND_MAP, COMMAND_DISPLAY_TEXT)
 
     def get_input(self) -> Tuple[str, str]:
         """Get user input with support for multi-line input and slash commands.
@@ -45,26 +104,29 @@ class InputManager:
                 - value: The user input text or the selected command
         """
         try:
-            text = prompt(
+            text_input = prompt(
                 'Enter: ',
                 completer=self.slash_completer,
-                complete_while_typing=True,
+                complete_while_typing=True, # <-- Re-enable this
                 in_thread=True
             )
-            text = text.rstrip()
+            text_input = text_input.rstrip()
+            normalized_text = text_input.lower() # Use lowercase for map lookup
 
-            if not text:
+            if not text_input:
                 return ('empty', '')
 
-            if self.is_exit_command(text):
-                return ('exit', text)
+            # Check if the input (lowercase) is a known command/shortcut/exit word
+            if normalized_text in COMMAND_MAP:
+                mapped_value = COMMAND_MAP[normalized_text]
+                if mapped_value == 'exit':
+                    return ('exit', text_input) # Return original text for exit message context
+                else:
+                    # Return the canonical command name (e.g., /copy)
+                    return ('command', mapped_value)
 
-            # Check for slash command
-            if text.startswith('/') and text in SLASH_COMMANDS:
-                return ('command', text)
-
-            # Check for multi-line input start flag (less likely with slash commands)
-            if text == "<<EOF":
+            # Check for multi-line input start flag
+            if text_input == "<<EOF":
                 lines = []
                 while True:
                     line = prompt(in_thread=True) # No completer needed for multi-line content
@@ -74,7 +136,7 @@ class InputManager:
                 return ('chat', "\n".join(lines)) # Treat multi-line as chat
 
             # Regular chat input
-            return ('chat', text)
+            return ('chat', text_input)
         except EOFError:
             return ('exit', 'EOF') # Treat Ctrl+D as exit
 
@@ -164,14 +226,3 @@ class InputManager:
         # Example: save_conversation(self.current_chat.id, messages) or save_message(last_message)
         # --- End Placeholder ---
         return True
-
-    def is_exit_command(self, text: str) -> bool:
-        """Check if the input is an exit command.
-
-        Args:
-            text: The input text to check
-
-        Returns:
-            bool: True if the input is an exit command, False otherwise
-        """
-        return text.lower() in ['exit', 'quit']
