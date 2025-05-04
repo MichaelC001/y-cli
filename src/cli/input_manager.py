@@ -2,7 +2,7 @@ import sys
 import pyperclip
 from typing import List, Optional, Tuple, Iterable
 from prompt_toolkit import prompt
-from prompt_toolkit.completion import WordCompleter, Completer, Completion
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
 from rich.console import Console
 from chat.models import Message
@@ -11,15 +11,25 @@ from chat.models import Message
 SLASH_COMMANDS = ["/copy", "/translate", "/save"]
 
 class SlashCommandCompleter(Completer):
-    """Completer for slash commands."""
+    """Completer for slash commands with manual filtering."""
     def __init__(self, commands: List[str]):
-        self.command_completer = WordCompleter(commands, ignore_case=True)
+        # Store the raw commands list
+        self.commands = commands
+        # self.command_completer = WordCompleter(commands, ignore_case=True) # We might not need this if filtering manually
 
     def get_completions(self, document: Document, complete_event) -> Iterable[Completion]:
-        text = document.text_before_cursor
-        if text.startswith('/') and ' ' not in text:
-            # Only complete if text starts with / and has no spaces yet
-            yield from self.command_completer.get_completions(document, complete_event)
+        text = document.text_before_cursor.lower() # Use lower for case-insensitive matching
+
+        if text.startswith('/'):
+            # Manual filtering
+            for command in self.commands:
+                if command.lower().startswith(text):
+                    yield Completion(
+                        command,          # The completion text
+                        start_position=-len(text) # Position relative to cursor where replacement starts
+                    )
+            # No need to call self.command_completer anymore
+            # yield from self.command_completer.get_completions(document, complete_event)
 
 class InputManager:
     def __init__(self, console: Console):
