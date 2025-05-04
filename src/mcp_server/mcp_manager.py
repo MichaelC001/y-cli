@@ -18,46 +18,53 @@ class MCPManager:
         self.connected_to_daemon = False
 
     async def check_daemon_running(self) -> bool:
-        """Check if the MCP daemon is running and we should use it"""
+        """Check if the MCP daemon is running and update self.connected_to_daemon."""
         try:
-            # Check if daemon is running
             self.use_daemon = await MCPDaemonClient.is_daemon_running()
             if self.use_daemon:
-                # Connect to daemon
                 self.connected_to_daemon = await self.client.connect()
                 if self.connected_to_daemon:
-                    self.console.print("[green]Connected to MCP daemon[/green]")
+                    # self.console.print("[green]Connected to MCP daemon[/green]") # Don't print here
                     return True
                 else:
-                    self.console.print("[yellow]MCP daemon is running but connection failed[/yellow]")
-                    self.use_daemon = False
+                    # self.console.print("[yellow]MCP daemon is running but connection failed[/yellow]")
+                    self.use_daemon = False # Ensure use_daemon is false if connection failed
+                    return False
             else:
-                self.console.print("[yellow]MCP daemon is not running[/yellow]")
+                # self.console.print("[yellow]MCP daemon is not running[/yellow]")
+                self.use_daemon = False
+                self.connected_to_daemon = False
                 return False
         except Exception as e:
             logger.error(f"Error checking daemon status: {str(e)}")
             self.use_daemon = False
+            self.connected_to_daemon = False
             return False
 
-    async def connect_to_servers(self, servers: List[str]):
-        """Connect to specified MCP servers"""
-        # First check if daemon is running
-        daemon_running = await self.check_daemon_running()
-        
-        if daemon_running:
-            # Just print which servers are available via daemon
-            if servers:
-                daemon_servers = await self.client.list_servers()
-                all_connected = True
-                for server_name in servers:
-                    if server_name in daemon_servers:
-                        self.console.print(f"[green]Server '{server_name}' available via daemon[/green]")
-                    else:
-                        self.console.print(f"[yellow]Warning: Server '{server_name}' not connected in daemon[/yellow]")
-                        all_connected = False
-                
-                if not all_connected:
-                    self.console.print("[yellow]Some servers are not available. Try restarting the MCP daemon.[/yellow]")
+    async def connect_to_servers(self, servers: List[str]) -> Tuple[List[str], List[str]]:
+        """Check daemon connection and return lists of connected/unconnected servers."""
+        connected_servers = []
+        unconnected_servers = []
+
+        # First check if daemon is running and update status flags
+        await self.check_daemon_running()
+
+        # Only proceed if daemon connection was successful
+        if self.connected_to_daemon:
+            daemon_servers = await self.client.list_servers()
+            for server_name in servers:
+                if server_name in daemon_servers:
+                    # self.console.print(f"[green]Server '{server_name}' available via daemon[/green]") # Don't print here
+                    connected_servers.append(server_name)
+                else:
+                    # self.console.print(f"[yellow]Warning: Server '{server_name}' not connected in daemon[/yellow]") # Don't print here
+                    unconnected_servers.append(server_name)
+
+            # if unconnected_servers: # Don't print the general warning here
+            #     self.console.print("[yellow]Some servers are not available. Try restarting the MCP daemon.[/yellow]")
+
+        # Return the lists, even if daemon wasn't connected (they will be empty)
+        return connected_servers, unconnected_servers
 
     def extract_mcp_tool_use(self, content: str) -> Optional[Tuple[str, str, dict]]:
         """Extract MCP tool use details from content if present"""

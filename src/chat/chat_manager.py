@@ -215,8 +215,25 @@ class ChatManager:
 
                 # Initialize MCP and system prompt if MCP server settings exist
                 if self.bot_config.mcp_servers:
-                    await self.mcp_manager.connect_to_servers(self.bot_config.mcp_servers)
-                    self.system_prompt += await self.mcp_manager.get_mcp_prompt(self.bot_config.mcp_servers, prompt_service) + "\n"
+                    # Connect and get status lists
+                    connected_servers, unconnected_servers = await self.mcp_manager.connect_to_servers(self.bot_config.mcp_servers)
+
+                    # Print status summary based on daemon connection and server lists
+                    if self.mcp_manager.connected_to_daemon:
+                        if connected_servers:
+                            self.display_manager.console.print(f"[green]mcp connected:[/green] {', '.join(connected_servers)}")
+                        if unconnected_servers:
+                             self.display_manager.console.print(f"[yellow]mcp not connected:[/yellow] {', '.join(unconnected_servers)}")
+                             self.display_manager.console.print("[yellow](Check MCP daemon status or config)[/yellow]")
+                        elif not connected_servers: # Daemon connected but no configured servers found
+                             self.display_manager.console.print("[yellow]mcp: Daemon connected, but no configured servers found active.[/yellow]")
+                    else:
+                         self.display_manager.console.print("[yellow]mcp: Daemon not running or connection failed.[/yellow]")
+
+                    # Get prompt info (this part remains the same)
+                    mcp_system_prompt = await self.mcp_manager.get_mcp_prompt(self.bot_config.mcp_servers, prompt_service)
+                    if mcp_system_prompt:
+                        self.system_prompt += mcp_system_prompt + "\n"
 
                 # Add additional prompts to system prompt
                 if self.bot_config.prompts:
