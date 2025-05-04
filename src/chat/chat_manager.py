@@ -61,6 +61,7 @@ class ChatManager:
         self.system_prompt: Optional[str] = None
         self.chat_id: Optional[str] = None
         self.continue_exist = False
+        self.last_printed_text_output: Optional[str] = None # Track last text output
 
         # Generate new chat ID immediately
         if chat_id:
@@ -114,6 +115,12 @@ class ChatManager:
     async def process_user_message(self, user_message: Message):
         self.messages.append(user_message)
         self.display_manager.display_message_panel(user_message, index=len(self.messages) - 1)
+        # Store user message content as last output
+        if isinstance(user_message.content, str):
+            self.last_printed_text_output = user_message.content
+        elif isinstance(user_message.content, list):
+             # Assuming user message content list has text part
+            self.last_printed_text_output = next((part.get('text') for part in user_message.content if part.get('type') == 'text'), None)
 
         assistant_message, external_id = await self.provider.call_chat_completions(self.messages, self.current_chat, self.system_prompt)
         if external_id:
@@ -129,6 +136,11 @@ class ChatManager:
         if not contains_tool_use(content):
             self.messages.append(assistant_message)
             self.display_manager.display_message_panel(assistant_message, index=len(self.messages) - 1)
+            # Store assistant message content as last output
+            if isinstance(content, str):
+                self.last_printed_text_output = content
+            elif isinstance(content, list):
+                self.last_printed_text_output = next((part.get('text') for part in content if part.get('type') == 'text'), None)
             return
 
         # Handle response with tool use
@@ -148,6 +160,10 @@ class ChatManager:
         assistant_message.content = plain_content
         self.messages.append(assistant_message)
         self.display_manager.display_message_panel(assistant_message, index=len(self.messages) - 1)
+        if isinstance(plain_content, str):
+             self.last_printed_text_output = plain_content
+        elif isinstance(plain_content, list):
+             self.last_printed_text_output = next((part.get('text') for part in plain_content if part.get('type') == 'text'), None)
 
         # Get user confirmation for tool execution
         if not self.get_user_confirmation(tool_content, server_name, tool_name):
@@ -219,30 +235,64 @@ class ChatManager:
 
                 while True:
                     # Get user input, multi-line flag, and line count
-                    user_input, is_multi_line, line_count = self.input_manager.get_input()
+                    # user_input, is_multi_line, line_count = self.input_manager.get_input()
+                    input_type, value = self.input_manager.get_input()
 
-                    if self.input_manager.is_exit_command(user_input):
+                    # if self.input_manager.is_exit_command(user_input):
+                    if input_type == 'exit':
                         self.display_manager.console.print("\n[yellow]Goodbye![/yellow]")
                         break
 
-                    if not user_input:
-                        self.display_manager.console.print("[yellow]Please enter a message.[/yellow]")
+                    if input_type == 'empty':
+                    # if not user_input:
+                        self.display_manager.console.print("[yellow]Please enter a message or command.[/yellow]")
                         continue
 
-                    # Handle copy command
-                    if user_input.lower().startswith('copy '):
-                        if self.input_manager.handle_copy_command(user_input, self.messages):
+                    # Handle commands
+                    if input_type == 'command':
+                        if value == '/copy':
+                            # Pass the last printed output to the handler
+                            self.input_manager.handle_copy_command(value, self.messages, self.last_printed_text_output)
+                        elif value == '/translate':
+                            content_to_translate = self.input_manager.handle_translate_command(value, self.messages)
+                            if content_to_translate:
+                                # Clear the '/translate' input line
+                                self.display_manager.clear_lines(1)
+                                # Call the provider's translate method
+                                self.display_manager.console.print("[dim]Translating...[/dim]")
+                                translated_text = await self.provider.translate_text(content_to_translate, target_language="Chinese")
+                                if translated_text:
+                                    self.display_manager.console.print(f"[blue]Translation:[/blue]\n{translated_text}")
+                                    self.last_printed_text_output = translated_text # Store translation as last output
+                                else:
+                                    self.display_manager.console.print("[yellow]Translation failed. See console for details.[/yellow]")
+                            # If content_to_translate is None, input_manager already printed an error
+                        elif value == '/save':
+                            # Pass the last printed output if save needs it
+                            self.input_manager.handle_save_command(value, self.messages)
+                        # Add other command handlers here if needed
+                        continue # Go back to prompt after handling command
+
+                    # Handle legacy copy command (optional, could be removed if /copy is preferred)
+                    if value.lower().startswith('copy '):
+                         # Pass the last printed output here too if needed, though legacy uses index
+                        if self.input_manager.handle_copy_command(value, self.messages, self.last_printed_text_output):
                             continue
 
-                    # Add user message to history
-                    user_message = create_message("user", user_input)
-                    if is_multi_line:
-                        # clear <<EOF line and EOF line
-                        self.display_manager.clear_lines(2)
+                    # Process as regular chat input
+                    if input_type == 'chat':
+                        user_input = value
+                        # Add user message to history
+                        user_message = create_message("user", user_input)
+                        # if is_multi_line:
+                        #     # clear <<EOF line and EOF line
+                        #     self.display_manager.clear_lines(2)
 
-                    self.display_manager.clear_lines(line_count)
+                        # Estimate lines cleared (this might need adjustment based on prompt toolkit rendering)
+                        # For simplicity, assume single line for now, multi-line needs more robust handling
+                        self.display_manager.clear_lines(1) # Clear the input line
 
-                    await self.process_user_message(user_message)
+                        await self.process_user_message(user_message)
 
             except (KeyboardInterrupt, EOFError):
                 self.display_manager.console.print("\n[yellow]Chat interrupted. Exiting...[/yellow]")

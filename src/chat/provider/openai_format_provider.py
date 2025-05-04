@@ -169,3 +169,72 @@ class OpenAIFormatProvider(BaseProvider, DisplayManagerMixin):
             raise Exception(f"HTTP error getting chat response: {str(e)}")
         except Exception as e:
             raise Exception(f"Error getting chat response: {str(e)}")
+
+    async def translate_text(self, text: str, target_language: str) -> Optional[str]:
+        """Translate text using the OpenAI-compatible endpoint.
+
+        Args:
+            text: The text to translate
+            target_language: The target language for translation
+
+        Returns:
+            Optional[str]: The translated text or None if translation fails
+        """
+        translate_system_prompt = f"You are a translation engine. Translate the user's text to {target_language}. Output ONLY the translated text, without any introductory phrases, explanations, or the original text."
+        translate_user_message = create_message('user', text)
+
+        # Prepare messages
+        prepared_messages = [
+            create_message('system', translate_system_prompt).to_dict(),
+            translate_user_message.to_dict()
+        ]
+        # Remove timestamp and potentially content list wrapping for simple translation
+        for msg in prepared_messages:
+            msg.pop("timestamp", None)
+            msg.pop("unix_timestamp", None)
+            # Ensure content is string for translation prompt
+            if isinstance(msg.get("content"), list):
+                msg["content"] = next((part.get("text") for part in msg["content"] if part.get("type") == "text"), "")
+
+        body = {
+            "model": self.bot_config.model, # Use the same configured model
+            "messages": prepared_messages,
+            "stream": False, # No need to stream for translation
+            "temperature": 0.2, # Lower temperature for more deterministic translation
+        }
+        # Optional: Add provider, max_tokens if necessary based on config
+        if self.bot_config.openrouter_config and "provider" in self.bot_config.openrouter_config:
+            body["provider"] = self.bot_config.openrouter_config["provider"]
+        if self.bot_config.max_tokens:
+            body["max_tokens"] = self.bot_config.max_tokens # Adjust if needed for translation length
+
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.bot_config.base_url,
+            ) as client:
+                response = await client.post(
+                    self.bot_config.custom_api_path if self.bot_config.custom_api_path else "/chat/completions",
+                    headers={
+                        "HTTP-Referer": "https://luohy15.com",
+                        'X-Title': 'y-cli-translate', # Indicate translation context
+                        "Authorization": f"Bearer {self.bot_config.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=body,
+                    timeout=30.0 # Shorter timeout for translation
+                )
+                response.raise_for_status()
+                result = response.json()
+                if result.get("choices") and result["choices"][0].get("message"):
+                    translated_content = result["choices"][0]["message"]["content"]
+                    return translated_content.strip()
+                else:
+                    # Log unexpected response format
+                    print(f"Unexpected translation response format: {result}")
+                    return None
+        except httpx.HTTPError as e:
+            print(f"HTTP error during translation: {str(e)}") # Print error instead of raising
+            return None
+        except Exception as e:
+            print(f"Error during translation: {str(e)}")
+            return None

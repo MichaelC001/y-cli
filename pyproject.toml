@@ -16,6 +16,7 @@ dependencies = [
     "mcp>=1.2.1",
     "aiofiles>=24.1.0",
     "loguru>=0.7.3",
+    "googletrans==4.0.0-rc1",
 ]
 
 [project.scripts]
