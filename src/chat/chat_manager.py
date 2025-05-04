@@ -238,7 +238,7 @@ class ChatManager:
                     # user_input, is_multi_line, line_count = self.input_manager.get_input()
                     input_type, value = self.input_manager.get_input()
 
-                    # if self.input_manager.is_exit_command(user_input):
+                    # Check for exit type returned directly by get_input
                     if input_type == 'exit':
                         self.display_manager.console.print("\n[yellow]Goodbye![/yellow]")
                         break
